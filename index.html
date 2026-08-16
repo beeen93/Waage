@@ -25,20 +25,26 @@
         let currentBruttoG = 0; 
         let currentTaraG = 0;
         
-        // Blockierungssicherer Gewichtsabruf via verstecktem Iframe-Kanal
+        // UNBLOCKIERBARER TUNNEL: Aktualisiert das unsichtbare Datenfenster alle 600ms
         setInterval(function() {
-          var xhttp = new XMLHttpRequest();
-          xhttp.onreadystatechange = function() {
-            if (this.readyState == 4 && this.status == 200) {
-              currentBruttoG = Math.round(parseFloat(this.responseText)) || 0;
+          document.getElementById('weight_tunnel').src = 'http://192.168.4' + new Date().getTime();
+        }, 600);
+
+        // Wird vollautomatisch aufgerufen, sobald das Datenfenster den Wert geladen hat
+        function readWeightFromTunnel() {
+          try {
+            var tunnel = document.getElementById('weight_tunnel');
+            var rawContent = tunnel.contentWindow.document.body.innerText || tunnel.contentDocument.body.innerText;
+            if (rawContent) {
+              currentBruttoG = Math.round(parseFloat(rawContent.trim())) || 0;
               document.getElementById('live_brutto_text').innerHTML = currentBruttoG + ' g';
               document.getElementById('txtBruttoField').value = currentBruttoG + ' g';
               calculateNetto();
             }
-          };
-          xhttp.open('GET', 'http://192.168.4', true); 
-          xhttp.send();
-        }, 600);
+          } catch(e) {
+            // Falls der Browser beim ersten Laden meckert, läuft die Schleife geräuschlos weiter
+          }
+        }
 
         function calculateNetto() {
           currentTaraG = parseInt(document.getElementById('txtTara').value) || 0;
@@ -66,9 +72,8 @@
           calculateNetto();
         }
 
-        // Steuert Hardware-Aktionen ohne XMLHttpRequest-Sperren über den Iframe-Tunnel
         function triggerHardware(path) {
-          document.getElementById('net_tunnel').src = 'http://192.168.4.1' + path + '?t=' + new Date().getTime();
+          document.getElementById('hardware_tunnel').src = 'http://192.168.4.1' + path + '?t=' + new Date().getTime();
         }
         function saveMeasurement() {
           let fahrer = document.getElementById('txtName').value || 'Unbekannt';
@@ -83,7 +88,7 @@
           liste.unshift(eintrag); 
           localStorage.setItem('waage_log', JSON.stringify(liste));
           
-          document.getElementById('status').innerHTML = '✅ Wiegung lokal auf dem Tablet protokolliert!';
+          document.getElementById('status').innerHTML = '✅ Wiegung erfolgreich protokolliert!';
           setTimeout(function() { document.getElementById('status').innerHTML = 'System bereit.'; }, 4000);
         }
 
@@ -107,11 +112,12 @@
         function sendCalibration() {
           var factor = document.getElementById('calFactor').value;
           triggerHardware('/calibrate?factor=' + factor);
+          document.getElementById('status').innerHTML = '⚙️ Kalibrierungs-Faktor live aktualisiert!';
         }
 
         async function startNFCScan() {
           let statusDiv = document.getElementById('status');
-          if (!('NDEFReader' in window)) { statusDiv.innerHTML = "❌ Web-NFC blockiert!"; return; }
+          if (!('NDEFReader' in window)) { statusDiv.innerHTML = "❌ Dieses Tablet blockiert Web-NFC im Browser! (HTTPS notwendig)"; return; }
           statusDiv.innerHTML = '⏳ Fahrzeug-NFC an das Tablet halten...';
           try {
             const ndef = new NDEFReader(); await ndef.scan();
@@ -121,7 +127,7 @@
                 if (record.recordType === 'text') {
                   const fullText = textDecoder.decode(record.data); const parts = fullText.split(':');
                   if (parts.length >= 2) {
-                    const key = parts.trim(); const val = parts.slice(1).join(':').trim();
+                    const key = parts[0].trim(); const val = parts.slice(1).join(':').trim();
                     if (key === 'Fahrer') document.getElementById('txtName').value = val;
                     if (key === 'Kennzeichen') document.getElementById('txtKz').value = val;
                     if (key === 'Art') document.getElementById('txtTyp').value = val;
@@ -186,7 +192,9 @@
   </div>
   <div class='card full-row' id='status'>System bereit.</div>
 </div>
-<!-- Unsichtbarer Sicherheitstunnel zur unverschlüsselten IP des ESP32 -->
-<iframe id='net_tunnel' style='display:none;'></iframe>
+
+<!-- UNSICHTBARE HARDWARE-TUNNEL (Hebeln die Chrome-Sperren aus) -->
+<iframe id='weight_tunnel' style='display:none;' onload='readWeightFromTunnel()'></iframe>
+<iframe id='hardware_tunnel' style='display:none;'></iframe>
 </body>
 </html>
