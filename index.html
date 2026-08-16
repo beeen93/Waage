@@ -25,55 +25,88 @@
         let currentBruttoG = 0; 
         let currentTaraG = 0;
         
-        // UNBLOCKIERBARER TUNNEL: Aktualisiert das unsichtbare Datenfenster alle 600ms
-        setInterval(function() {
-          document.getElementById('weight_tunnel').src = 'http://192.168.4' + new Date().getTime();
-        }, 600);
-
-        // Wird vollautomatisch aufgerufen, sobald das Datenfenster den Wert geladen hat
-        function readWeightFromTunnel() {
-          try {
-            var tunnel = document.getElementById('weight_tunnel');
-            var rawContent = tunnel.contentWindow.document.body.innerText || tunnel.contentDocument.body.innerText;
-            if (rawContent) {
-              currentBruttoG = Math.round(parseFloat(rawContent.trim())) || 0;
-              document.getElementById('live_brutto_text').innerHTML = currentBruttoG + ' g';
-              document.getElementById('txtBruttoField').value = currentBruttoG + ' g';
-              calculateNetto();
-            }
-          } catch(e) {
-            // Falls der Browser beim ersten Laden meckert, läuft die Schleife geräuschlos weiter
+        // UNBLOCKIERBAR: Extrahiert das Gewicht direkt aus der Adresszeile (z.B. ?w=1500)
+        function parseWeightFromURL() {
+          const urlParams = new URLSearchParams(window.location.search);
+          if (urlParams.has('w')) {
+            currentBruttoG = Math.round(parseFloat(urlParams.get('w'))) || 0;
+            document.getElementById('live_brutto_text').innerHTML = currentBruttoG + ' g';
+            document.getElementById('txtBruttoField').value = currentBruttoG + ' g';
           }
+          
+          // Formular-Werte aus dem Speicher wiederherstellen, damit sie beim URL-Wechsel nicht geloescht werden
+          if(localStorage.getItem('form_fahrer')) document.getElementById('txtName').value = localStorage.getItem('form_fahrer');
+          if(localStorage.getItem('form_kz')) document.getElementById('txtKz').value = localStorage.getItem('form_kz');
+          if(localStorage.getItem('form_typ')) document.getElementById('txtTyp').value = localStorage.getItem('form_typ');
+          if(localStorage.getItem('form_tara')) {
+             document.getElementById('txtTara').value = localStorage.getItem('form_tara');
+             currentTaraG = parseInt(localStorage.getItem('form_tara')) || 0;
+          }
+          calculateNetto();
         }
+        window.addEventListener('DOMContentLoaded', parseWeightFromURL);
+
+        // Fragt im Hintergrund unblockiert das Gewicht ab und aktualisiert die URL ohne sichtbaren Reload
+        setInterval(function() {
+          var xhttp = new XMLHttpRequest();
+          xhttp.onreadystatechange = function() {
+            if (this.readyState == 4 && this.status == 200) {
+              let newW = Math.round(parseFloat(this.responseText)) || 0;
+              if(newW !== currentBruttoG) {
+                 // Aktualisiert die URL im Browser absolut blockierungsfrei im Hintergrund!
+                 const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?w=' + newW;
+                 window.history.replaceState({path:newUrl}, '', newUrl);
+                 currentBruttoG = newW;
+                 document.getElementById('live_brutto_text').innerHTML = currentBruttoG + ' g';
+                 document.getElementById('txtBruttoField').value = currentBruttoG + ' g';
+                 calculateNetto();
+              }
+            }
+          };
+          xhttp.open('GET', 'http://192.168.4', true);
+          xhttp.send();
+        }, 800);
 
         function calculateNetto() {
           currentTaraG = parseInt(document.getElementById('txtTara').value) || 0;
+          localStorage.setItem('form_tara', currentTaraG);
           document.getElementById('live_netto_text').innerHTML = (currentBruttoG - currentTaraG) + ' g';
+        }
+
+        function storeInput(id, key) {
+          localStorage.setItem(key, document.getElementById(id).value);
         }
 
         function setGast() {
           document.getElementById('txtName').value = 'Gast-Fahrer';
           document.getElementById('txtKz').value = 'GAST-' + Math.floor(Math.random() * 900 + 100);
           document.getElementById('txtTyp').value = 'Allgemein'; 
-          document.getElementById('txtTara').value = '0'; 
+          document.getElementById('txtTara').value = '0';
+          localStorage.setItem('form_fahrer', 'Gast-Fahrer');
+          localStorage.setItem('form_kz', document.getElementById('txtKz').value);
+          localStorage.setItem('form_typ', 'Allgemein');
+          localStorage.setItem('form_tara', '0');
           calculateNetto();
         }
 
         function resetForm() {
-          document.getElementById('txtName').value = ''; 
-          document.getElementById('txtKz').value = '';
-          document.getElementById('txtTyp').value = ''; 
-          document.getElementById('txtTara').value = '0'; 
+          document.getElementById('txtName').value = ''; document.getElementById('txtKz').value = '';
+          document.getElementById('txtTyp').value = ''; document.getElementById('txtTara').value = '0';
+          localStorage.removeItem('form_fahrer'); localStorage.removeItem('form_kz');
+          localStorage.removeItem('form_typ'); localStorage.removeItem('form_tara');
           calculateNetto();
         }
 
         function takeTaraFromWaage() {
-          document.getElementById('txtTara').value = currentBruttoG; 
+          document.getElementById('txtTara').value = currentBruttoG;
+          localStorage.setItem('form_tara', currentBruttoG);
           calculateNetto();
         }
 
         function triggerHardware(path) {
-          document.getElementById('hardware_tunnel').src = 'http://192.168.4.1' + path + '?t=' + new Date().getTime();
+          // Sendet Befehle stoerungsfrei ueber ein unsichtbares Bildelement (Klassischer Pixel-Tracker)
+          var img = new Image();
+          img.src = 'http://192.168.4.1' + path + '?t=' + new Date().getTime();
         }
         function saveMeasurement() {
           let fahrer = document.getElementById('txtName').value || 'Unbekannt';
@@ -127,11 +160,11 @@
                 if (record.recordType === 'text') {
                   const fullText = textDecoder.decode(record.data); const parts = fullText.split(':');
                   if (parts.length >= 2) {
-                    const key = parts[0].trim(); const val = parts.slice(1).join(':').trim();
-                    if (key === 'Fahrer') document.getElementById('txtName').value = val;
-                    if (key === 'Kennzeichen') document.getElementById('txtKz').value = val;
-                    if (key === 'Art') document.getElementById('txtTyp').value = val;
-                    if (key === 'Leergewicht') { document.getElementById('txtTara').value = val; currentTaraG = parseInt(val) || 0; }
+                    const key = parts.trim(); const val = parts.slice(1).join(':').trim();
+                    if (key === 'Fahrer') { document.getElementById('txtName').value = val; localStorage.setItem('form_fahrer', val); }
+                    if (key === 'Kennzeichen') { document.getElementById('txtKz').value = val; localStorage.setItem('form_kz', val); }
+                    if (key === 'Art') { document.getElementById('txtTyp').value = val; localStorage.setItem('form_typ', val); }
+                    if (key === 'Leergewicht') { document.getElementById('txtTara').value = val; localStorage.setItem('form_tara', val); currentTaraG = parseInt(val) || 0; }
                   }
                 }
               }
@@ -154,6 +187,7 @@
               ]
             });
             document.getElementById('txtTara').value = currentBruttoG;
+            localStorage.setItem('form_tara', currentBruttoG);
             statusDiv.innerHTML = '✅ Fahrzeug-NFC erfolgreich registriert!'; calculateNetto();
           } catch (error) { statusDiv.innerHTML = '❌ Fehler beim Schreiben: ' + error; }
         }
@@ -168,9 +202,9 @@
   
   <div class='card'>
     <h3>📋 Fahrzeug- &amp; Stammdaten</h3>
-    <label class='tel-label'>Fahrer / Name</label><input type='text' id='txtName' placeholder='z.B. Fahrer 1'>
-    <label class='tel-label'>Fahrzeugkennzeichen</label><input type='text' id='txtKz' placeholder='z.B. AUR-W 2026'>
-    <label class='tel-label'>Fahrzeugtyp (Freitext)</label><input type='text' id='txtTyp' placeholder='z.B. Kipper, Sattelzug, Traktor'>
+    <label class='tel-label'>Fahrer / Name</label><input type='text' id='txtName' oninput="storeInput('txtName','form_fahrer')" placeholder='z.B. Fahrer 1'>
+    <label class='tel-label'>Fahrzeugkennzeichen</label><input type='text' id='txtKz' oninput="storeInput('txtKz','form_kz')" placeholder='z.B. AUR-W 2026'>
+    <label class='tel-label'>Fahrzeugtyp (Freitext)</label><input type='text' id='txtTyp' oninput="storeInput('txtTyp','form_typ')" placeholder='z.B. Kipper, Sattelzug, Traktor'>
     <label class='tel-label'>Aktueller Waagen-Rohwert</label><input type='text' id='txtBruttoField' value='0 g' disabled>
     <label class='tel-label'>Programmiertes Leergewicht / Tara (g)</label><input type='number' id='txtTara' value='0' oninput='calculateNetto()'>
     <div class='btn-container'><button type='button' class='btn' onclick='setGast()'>Gast-Profil</button><button type='button' class='btn btn-primary' onclick='takeTaraFromWaage()'>Waagen-Wert als Tara</button></div>
@@ -192,9 +226,5 @@
   </div>
   <div class='card full-row' id='status'>System bereit.</div>
 </div>
-
-<!-- UNSICHTBARE HARDWARE-TUNNEL (Hebeln die Chrome-Sperren aus) -->
-<iframe id='weight_tunnel' style='display:none;' onload='readWeightFromTunnel()'></iframe>
-<iframe id='hardware_tunnel' style='display:none;'></iframe>
 </body>
 </html>
