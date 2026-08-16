@@ -24,20 +24,19 @@
     <script>
         let currentBruttoG = 0; 
         let currentTaraG = 0;
+        let ws;
         
-        setInterval(function() {
-          var xhttp = new XMLHttpRequest();
-          xhttp.onreadystatechange = function() {
-            if (this.readyState == 4 && this.status == 200) {
-              currentBruttoG = Math.round(parseFloat(this.responseText)) || 0;
-              document.getElementById('live_brutto_text').innerHTML = currentBruttoG + ' g';
-              document.getElementById('txtBruttoField').value = currentBruttoG + ' g';
-              calculateNetto();
-            }
+        function initWebSocket() {
+          ws = new WebSocket('ws://192.168.4.1:81/');
+          ws.onmessage = function(event) {
+            currentBruttoG = Math.round(parseFloat(event.data)) || 0;
+            document.getElementById('live_brutto_text').innerHTML = currentBruttoG + ' g';
+            document.getElementById('txtBruttoField').value = currentBruttoG + ' g';
+            calculateNetto();
           };
-          xhttp.open('GET', 'http://192.168.4', true); 
-          xhttp.send();
-        }, 500);
+          ws.onclose = function() { setTimeout(initWebSocket, 2000); };
+        }
+        window.addEventListener('load', initWebSocket);
 
         function calculateNetto() {
           currentTaraG = parseInt(document.getElementById('txtTara').value) || 0;
@@ -52,7 +51,6 @@
           calculateNetto();
         }
 
-        // BEHOBEN: Störender Text "UX711_RESET" komplett entfernt!
         function resetForm() {
           document.getElementById('txtName').value = ''; 
           document.getElementById('txtKz').value = '';
@@ -66,10 +64,8 @@
           calculateNetto();
         }
 
-        function triggerHardware(path) {
-          var xhttp = new XMLHttpRequest();
-          xhttp.open('GET', 'http://192.168.4.1' + path, true); 
-          xhttp.send();
+        function triggerHardware(msg) {
+          if (ws && ws.readyState === WebSocket.OPEN) { ws.send(msg); }
         }
         function saveMeasurement() {
           let fahrer = document.getElementById('txtName').value || 'Unbekannt';
@@ -85,10 +81,7 @@
           localStorage.setItem('waage_log', JSON.stringify(liste));
           
           document.getElementById('status').innerHTML = '✅ Wiegung erfolgreich protokolliert!';
-          
-          setTimeout(function() {
-            document.getElementById('status').innerHTML = 'System bereit.';
-          }, 4000);
+          setTimeout(function() { document.getElementById('status').innerHTML = 'System bereit.'; }, 4000);
         }
 
         function exportCSV() {
@@ -112,29 +105,23 @@
         
         function sendCalibration() {
           var factor = document.getElementById('calFactor').value;
-          triggerHardware('/calibrate?factor=' + factor);
+          triggerHardware('CAL:' + factor);
           document.getElementById('status').innerHTML = '⚙️ Kalibrierungs-Faktor live aktualisiert!';
         }
 
         async function startNFCScan() {
           let statusDiv = document.getElementById('status');
-          if (!('NDEFReader' in window)) {
-            statusDiv.innerHTML = "❌ Dieses Tablet blockiert Web-NFC im Browser! (HTTPS notwendig)";
-            return;
-          }
+          if (!('NDEFReader' in window)) { statusDiv.innerHTML = "❌ Web-NFC blockiert!"; return; }
           statusDiv.innerHTML = '⏳ Fahrzeug-NFC an das Tablet halten...';
           try {
-            const ndef = new NDEFReader(); 
-            await ndef.scan();
+            const ndef = new NDEFReader(); await ndef.scan();
             ndef.onreading = event => {
               const textDecoder = new TextDecoder();
               for (const record of event.message.records) {
                 if (record.recordType === 'text') {
-                  const fullText = textDecoder.decode(record.data);
-                  const parts = fullText.split(':');
+                  const fullText = textDecoder.decode(record.data); const parts = fullText.split(':');
                   if (parts.length >= 2) {
-                    const key = parts[0].trim(); 
-                    const val = parts.slice(1).join(':').trim();
+                    const key = parts[0].trim(); const val = parts.slice(1).join(':').trim();
                     if (key === 'Fahrer') document.getElementById('txtName').value = val;
                     if (key === 'Kennzeichen') document.getElementById('txtKz').value = val;
                     if (key === 'Art') document.getElementById('txtTyp').value = val;
@@ -142,22 +129,17 @@
                   }
                 }
               }
-              statusDiv.innerHTML = '✅ Fahrzeugdaten via NFC geladen.'; 
-              calculateNetto();
+              statusDiv.innerHTML = '✅ Fahrzeugdaten via NFC geladen.'; calculateNetto();
             };
           } catch (error) { statusDiv.innerHTML = '❌ NFC-Lesefehler: ' + error; }
         }
 
         async function writeNFCTag() {
           let statusDiv = document.getElementById('status');
-          if (!('NDEFReader' in window)) {
-            statusDiv.innerHTML = "❌ Dieses Tablet blockiert Web-NFC im Browser!";
-            return;
-          }
+          if (!('NDEFReader' in window)) { statusDiv.innerHTML = "❌ Web-NFC blockiert!"; return; }
           statusDiv.innerHTML = '⏳ Leeren Sticker an das Tablet halten zum Brennen...';
           try {
-            const ndef = new NDEFReader(); 
-            await ndef.write({
+            const ndef = new NDEFReader(); await ndef.write({
               records: [
                 { recordType: 'text', data: 'Fahrer:' + document.getElementById('txtName').value },
                 { recordType: 'text', data: 'Kennzeichen:' + document.getElementById('txtKz').value },
@@ -166,8 +148,7 @@
               ]
             });
             document.getElementById('txtTara').value = currentBruttoG;
-            statusDiv.innerHTML = '✅ Fahrzeug-NFC erfolgreich registriert!';
-            calculateNetto();
+            statusDiv.innerHTML = '✅ Fahrzeug-NFC erfolgreich registriert!'; calculateNetto();
           } catch (error) { statusDiv.innerHTML = '❌ Fehler beim Schreiben: ' + error; }
         }
     </script>
@@ -183,36 +164,24 @@
     <h3>📋 Fahrzeug- &amp; Stammdaten</h3>
     <label class='tel-label'>Fahrer / Name</label><input type='text' id='txtName' placeholder='z.B. Fahrer 1'>
     <label class='tel-label'>Fahrzeugkennzeichen</label><input type='text' id='txtKz' placeholder='z.B. AUR-W 2026'>
-    
     <label class='tel-label'>Fahrzeugtyp (Freitext)</label><input type='text' id='txtTyp' placeholder='z.B. Kipper, Sattelzug, Traktor'>
-    
     <label class='tel-label'>Aktueller Waagen-Rohwert</label><input type='text' id='txtBruttoField' value='0 g' disabled>
     <label class='tel-label'>Programmiertes Leergewicht / Tara (g)</label><input type='number' id='txtTara' value='0' oninput='calculateNetto()'>
     <div class='btn-container'><button type='button' class='btn' onclick='setGast()'>Gast-Profil</button><button type='button' class='btn btn-primary' onclick='takeTaraFromWaage()'>Waagen-Wert als Tara</button></div>
     
     <h3 style='margin-top:20px;'>📱 Tablet NFC-Schnittstelle</h3>
-    <div class='btn-container'>
-      <button type='button' class='btn btn-nfc' onclick='startNFCScan()'>🔍 NFC einlesen</button>
-      <button type='button' class='btn btn-nfc' onclick='writeNFCTag()'>💾 NFC brennen</button>
-    </div>
+    <div class='btn-container'><button type='button' class='btn btn-nfc' onclick='startNFCScan()'>🔍 NFC einlesen</button><button type='button' class='btn btn-nfc' onclick='writeNFCTag()'>💾 NFC brennen</button></div>
   </div>
   
   <div class='card'>
     <h3>🚦 Automatik-Ampel aktiv</h3>
     <p style="font-size: 13px; color: #9ca3af; margin: 0 0 10px 0;">Die Ampel schaltet vollautomatisch bei Belastung auf ROT und nach 30 Sekunden auf GRÜN.</p>
-    
-    <h3>💡 Systembeleuchtung (Pin 13)</h3>
-    <button type='button' class='btn' style='width:100%;' onclick="triggerHardware('/licht')">💡 Licht umschalten</button>
-    
+    <h3>💡 Systembeleuchtung (Pin 13)</h3><button type='button' class='btn' style='width:100%;' onclick="triggerHardware('LICHT')">💡 Licht umschalten</button>
     <h3>⚖️ Sensor-Kalibrierung &amp; Justierung</h3>
-    <div style="display: flex; gap: 10px;">
-        <input type='number' step='0.0001' id='calFactor' value='27.0617'>
-        <button type='button' class='btn btn-primary' style='background:#d97706; border-color:#d97706; width: auto; margin: 0;' onclick='sendCalibration()'>Faktor live setzen</button>
-    </div>
-    
+    <div style="display: flex; gap: 10px;"><input type='number' step='0.0001' id='calFactor' value='27.0617'><button type='button' class='btn btn-primary' style='background:#d97706; border-color:#d97706; width: auto; margin: 0;' onclick='sendCalibration()'>Faktor live setzen</button></div>
     <h3>📊 Wiegeprotokoll &amp; Daten</h3>
     <button type='button' class='btn btn-primary' style='width:100%; margin-bottom:10px; font-size:16px;' onclick='saveMeasurement()'>📥 Wiegevorgang protokollieren</button>
-    <div class='btn-container'><button type='button' class='btn' onclick='exportCSV()'>📊 Excel-CSV Export</button><button type='button' class='btn btn-danger' onclick="triggerHardware('/tare')">⚖️ Waage nullen</button></div>
+    <div class='btn-container'><button type='button' class='btn' onclick='exportCSV()'>📊 Excel-CSV Export</button><button type='button' class='btn btn-danger' onclick="triggerHardware('TARE')">⚖️ Waage nullen</button></div>
     <button type='button' class='btn btn-danger' style='width:100%; margin-top:10px; padding:8px;' onclick='clearLocalLog()'>🗑️ Liste löschen</button>
   </div>
   <div class='card full-row' id='status'>System bereit.</div>
